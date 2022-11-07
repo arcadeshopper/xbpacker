@@ -1,0 +1,451 @@
+* FILE     : XBP12;S2
+* VERSION  : 1.2A
+* REVISION : RELEASE 2
+* DATE     : 06/05/95
+ 
+* XB/PACKER save/load banks to disk
+ 
+PABD   DATA 0
+       DATA VDPBUF
+       DATA 0
+       DATA VBFSIZ
+       BYTE 0
+PABNL  BYTE 0
+PABNAM BSS  40
+ 
+MAXLEN BYTE 40
+SAVE   BYTE 6
+LOAD   BYTE 5
+ID     TEXT 'XB/P1.2'         ID string
+       BYTE 0                 demo flag
+       EVEN
+SAVECB DATA 0                 saved current bank
+SLWS   BSS  32                save/load workspace
+ 
+ASAVE  LWPI SLWS
+ 
+       MOV  @SETST,@SETST     see if setup has been done
+       JNE  AS4A
+       BL   @XERR
+       DATA 5
+ 
+AS4A   BL   @REGCHK           check if registered
+       JMP  AS4B
+       BL   @XERR
+       DATA 7
+ 
+AS4B   CB   @FF,@>8344        make sure no pgm running
+       JNE  AS4
+       BL   @XERR
+       DATA 6
+ 
+AS4    CLR  R0
+       LI   R1,1
+       LI   R2,PABNL
+       MOVB @MAXLEN,*R2
+       BLWP @STRREF           get the file name from XB call link
+ 
+       MOVB @SAVE,@PABD       install pab into VDP
+       LI   R0,VDPPAB
+       LI   R1,PABD
+       LI   R2,50
+       BLWP @VMBW
+ 
+* start building XB/P header
+ 
+       LI   R0,VDPBUF         r0 stays pointing to the file buffer
+ 
+       LI   R1,ID             install the ID string & demo flag byte
+       LI   R2,8
+       BLWP @VMBW
+       A    R2,R0
+ 
+       MOV  @CB,@SAVECB       save current byte for later return
+       MOV  @AMSSIZ,R3        r3 is now the bank counter
+       LI   R4,NAMES          r4 points into the names buffer
+       MOV  @ONE,@FAC         for bank select
+ 
+* scan banks for line table pointers
+ 
+ASLP1  BL   @ASMBNK           change bank
+ 
+       MOV  R4,R1             get name pointer
+       LI   R2,20
+       BLWP @VMBW             install name
+       A    R2,R0
+       A    R2,R4
+ 
+       LI   R1,>8330          get line pointers
+       LI   R2,4
+       BLWP @VMBW             save line table poingers
+       A    R2,R0
+ 
+       INC  @FAC
+       DEC  R3                got all banks?
+       JNE  ASLP1             no, loop
+ 
+* zero out spare header area if 128K card
+ 
+       C    @AMSSIZ,@TEN
+       JEQ  AS2D
+ 
+       CLR  R1                zero out future exp. area
+       LI   R2,120            120 bytes
+ASLP2  BLWP @VSBW
+       INC  R0
+       DEC  R2
+       JNE  ASLP2
+ 
+* install user name
+ 
+AS2D   LI   R1,REGIS+1        save user's name in file
+       LI   R2,30
+       BLWP @VMBW
+       A    R2,R0
+ 
+* save the banks, if used
+ 
+       LI   R5,VBFSIZ-278     counter for # of bytes in buffer
+       MOV  @AMSSIZ,R3        # of banks
+       LI   R6,1              starting bank#
+ 
+       BL   @SETVW            setup VPD write address
+*                             (no need to update R0 any more, VDP address auto-
+*                             increments)
+ 
+AS2C   MOV  R6,@FAC
+       BL   @ASMBNK           select bank
+*                             (note: this form of bank select is used instead of
+*                             SETBAN for the XB pointer handling of the BANK
+*                             routine.)
+ 
+       MOV  @>8330,R4         pointer into start of XB program
+ 
+AS2B   MOVB *R4+,@VDPWD       move a byte to VDP buffer
+ 
+       DEC  R5                check if buffer is full
+       JNE  AS2A
+       BL   @SAVEIT           if so, purge it
+ 
+       LI   R5,VBFSIZ         reset byte counter
+       LI   R0,VDPBUF         reset buffer pointer
+       BL   @SETVW            reset VDP write address
+ 
+AS2A   MOV  R4,R4             check if at end of XB program
+       JNE  AS2B              if not, loop
+       INC  R6                if so, get ready for next bank
+       DEC  R3                check if done with all banks
+       JNE  AS2C              if not, go set new bank and continue
+       CI   R5,VBFSIZ         check if a final purge is needed
+       JEQ  AS3               if null, just exit
+       BL   @SAVEIT           else do final save
+ 
+AS3    MOV  @SAVECB,@FAC      restore current bank
+       BL   @ASMBNK
+       LWPI GPLWS
+       B    @NEXT
+ 
+SETVW  ORI  R0,>4000          setup VDP write address
+SETVRD SWPB R0                setup VDP read address
+       MOVB R0,@VDPWA
+       SWPB R0
+       MOVB R0,@VDPWA
+       RT
+ 
+SAVEIT LI   R9,VDPPAB+9       install pointer to pab
+       MOV  R9,@>8356
+ 
+       LI   R1,VBFSIZ         calc current buffer size
+       S    R5,R1
+       MOV  R1,@PABD+6
+       LI   R0,VDPPAB+6
+       LI   R1,PABD+6
+       LI   R2,2
+       BLWP @VMBW             and install into pab
+ 
+       BLWP @DSRLNK
+       DATA 8
+       JNE  SIT1
+       B    @FERROR
+SIT1   LI   R0,VDPPAB+9
+       BLWP @VSBR             get name len
+       SRL  R1,8
+       A    R1,R0             point to last char in name
+       BLWP @VSBR
+       AI   R1,>0100          increment last char
+       BLWP @VSBW
+       RT
+ 
+* change bank to number in FAC
+ 
+ASMBNK LWPI MYWS              change to other WS so that current one is OK
+       LI   R10,ASBN1         load r10 with return address
+       B    @BANKN4           and change bank
+ASBN1  LWPI SLWS
+       RT
+ 
+* Load banks
+ 
+LTIMES DATA 0                 # of time aload is run
+AMFLG  DATA 0                 # of banks to be loaded
+ 
+ALOAD  LWPI SLWS
+ 
+       MOV  @SETST,@SETST     make sure setup was done
+       JNE  AL4A
+       BL   @XERR
+       DATA 5
+ 
+AL4A   MOV  @LTIMES,@LTIMES   allow one use if not registered
+       JEQ  AL4B
+ 
+       BL   @REGCHK           check if registered
+       JMP  AL4B
+       BL   @XERR
+       DATA 7
+ 
+AL4B   CLR  R0                get file name
+       LI   R1,1
+       LI   R2,PABNL
+       MOVB @MAXLEN,*R2
+       BLWP @STRREF
+ 
+       MOVB @LOAD,@PABD       install PAB
+       LI   R0,VDPPAB
+       LI   R1,PABD
+       LI   R2,50
+       BLWP @VMBW
+ 
+       BL   @LOADIT           get 1st file segment
+ 
+       MOV  @PABD+6,R0        check for minimum file size
+       CI   R0,403
+       JH   AL5
+       BL   @XERR             report error
+       DATA 1
+ 
+AL5    LI   R0,VDPBUF         grab ID from file header
+       LI   R1,BUF1
+       LI   R2,8
+       BLWP @VMBR
+ 
+       LI   R0,ID             check file header
+       LI   R2,4
+AL5B   CB   *R0+,*R1+
+       JEQ  AL5C
+       BL   @XERR
+       DATA 2
+AL5C   DEC  R2
+       JNE  AL5B
+ 
+       MOV  @LTIMES,@LTIMES
+       JNE  AL5D
+       MOVB @BUF1+7,@BUF1+7
+       JNE  AL5D
+       BL   @XERR
+       DATA 7
+ 
+AL5D   MOV  @CB,@SAVECB       save CB
+ 
+* Determine if file format is 5 or 10 banks
+ 
+       MOV  @FIVE,@AMFLG      assume 5 banks for now
+       C    @AMSSIZ,@FIVE     if small ams, then must only load 5 banks!
+       JEQ  AL5E              go use 5 bank setting
+       LI   R0,VDPBUF+148     get byte from spare line table area
+       BLWP @VSBR
+       MOVB R1,R1             is it zero?
+       JEQ  AL5E              yes, only 5 banks to load
+       MOV  @TEN,@AMFLG       has valid data, so load 10 banks
+ 
+* ------------------------------------------
+ 
+AL5E   MOV  @AMFLG,R3         bank counter
+       LI   R4,NAMES          point to names buffer
+       MOV  @ONE,@FAC         bank select
+       LI   R0,VDPBUF+8       point to 1st name in buffer
+ 
+ALLP1  BL   @ASMBNK           select bank
+ 
+       MOV  R4,R1             get name pointer
+       LI   R2,20
+       BLWP @VMBR             get name
+       A    R2,R0
+       A    R2,R4
+ 
+       LI   R2,4
+       LI   R1,>8330          restore line table pointers
+       BLWP @VMBR             get pointer
+       A    R2,R0
+       INC  @FAC              nex bank
+       DEC  R3                done all banks?
+       JNE  ALLP1             no, loop
+ 
+* skip over spare
+ 
+       C    @AMFLG,@TEN       if ten were loaded, no need to adjust
+       JEQ  ALLP1B
+       AI   R0,120
+ 
+* skip over user's name
+ 
+ALLP1B AI   R0,30
+ 
+* restore banks
+ 
+       MOV  @PABD+6,R5        get # of bytes in file segment
+       AI   R5,-278           adjust for header
+       MOV  @AMFLG,R3         # of banks
+       LI   R6,1              starting bank #
+ 
+       BL   @SETVRD           setup VDP read add. point to buffer
+ 
+AL2C   MOV  R6,@FAC
+       BL   @ASMBNK           select bank
+       MOV  @>8330,R4         get loading address
+ 
+AL2B   MOVB @VDPRD,*R4+       move from VDP to AMS
+ 
+       MOV  R4,R4             end of program?
+       JNE  AL2A              no, continue
+       INC  R6                yes, next bank
+       DEC  R3                done all banks?
+       JEQ  AL3               yes, exit
+ 
+AL2A   DEC  R5                buffer empty?
+       JNE  AL2D              no, continue
+ 
+       BL   @LOADIT           yes, get next segment
+       MOV  @PABD+6,R5        get segment length
+       LI   R0,VDPBUF
+       BL   @SETVRD           reset VDP address
+ 
+AL2D   MOV  R4,R4             at end of program?
+       JEQ  AL2C              yes, go select new bank
+       JMP  AL2B              no, stay in loop
+ 
+AL3    MOV  @SAVECB,@FAC      restore original bank
+       BL   @ASMBNK
+       INC  @LTIMES
+ 
+       CB   @>8312,@ONE+1     check for optional params
+       JH   AL3A
+       B    @BANKX2           run or return to cmd line
+ 
+AL3A   CLR  R0
+       LI   R1,2
+       BLWP @NUMREF
+       BLWP @XMLLNK
+       DATA CFI
+ 
+       C    @FAC,@AMSSIZ
+       JL   AL3B
+       JEQ  AL3B
+       B    @ERROR
+ 
+AL3B   MOV  @FAC,@FAC
+       JEQ  AL3C
+       BL   @ASMBNK
+       MOVB @FF,@>8344
+       B    @BANKX2
+ 
+AL3C   B    @MENU
+ 
+LOADIT LI   R9,VDPPAB+9       load pointer to PAB
+       MOV  R9,@>8356
+ 
+       LI   R0,VDPPAB+6       install max file size
+       LI   R1,VBFSIZ
+       MOV  R1,@PABD+6
+       LI   R1,PABD+6
+       LI   R2,2
+       BLWP @VMBW
+ 
+       BLWP @DSRLNK           file access
+       DATA 8
+       JNE  LIT1
+       B    @FERROR           on error...
+ 
+LIT1   LI   R0,VDPPAB+6       get # of bytes actually read in
+       LI   R1,PABD+6
+       LI   R2,2
+       BLWP @VMBR
+ 
+       LI   R0,VDPPAB+9       increment last char of file name
+       BLWP @VSBR
+       SRL  R1,8
+       A    R1,R0
+       BLWP @VSBR
+       AI   R1,>0100
+       BLWP @VSBW
+       RT
+ 
+* registration check
+ 
+REGCHK MOVB @REGIS,R4
+       JNE  RGCK1
+       INCT R11
+       RT
+ 
+RGCK1  CLR  R5                chksum
+       SRL  R4,8              make len a word
+       LI   R6,2              multiplier
+       LI   R3,REGIS+1        pointer to user's name
+ 
+RGCK2  MOVB *R3+,R7           get a char
+       SRL  R7,8
+       MPY  R6,R7
+       A    R8,R5
+ 
+       INC  R6
+       DEC  R4
+       JNE  RGCK2
+ 
+       C    R5,@CHKSUM
+       JEQ  RGCKX
+       BLWP @>0000
+ 
+RGCKX  RT
+ 
+* report errors
+ 
+ERRTAB DATA 1,ET1,1,ET2,1,ET3,1,ET4,1,ET5
+       DATA 1,ET6,1,ET7
+ 
+ET1    DATA 23*32+2,25
+       TEXT '* ALOAD ERROR: SMALL FILE'
+ 
+ET2    DATA 23*32+2,17
+       TEXT '* WRONG FILE TYPE'
+ 
+ET3    DATA 23*32+2,14
+       TEXT '* NO AMS FOUND'
+ 
+ET4    DATA 23*32+2,27
+       TEXT '* USE PASS FROM BANK 1 ONLY'
+ 
+ET5    DATA 23*32+2,26
+       TEXT '* YOU MUST USE SETUP FIRST'
+ 
+ET6    DATA 23*32+2,26
+       TEXT '* ASAVE FROM CMD LINE ONLY'
+ 
+ET7    DATA 23*32+2,26
+       TEXT '* SORRY, YOU MUST REGISTER'
+ 
+XERR   MOV  *R11,R4           get error type from data
+       DEC  R4
+       SLA  R4,2
+       AI   R4,ERRTAB
+ 
+       BLWP @XMLLNK
+       DATA SCROLL
+       BLWP @XMLLNK
+       DATA SCROLL
+ 
+       BL   @PRINT
+ 
+       B    @ERR2
+ 
+* EOF: XBP12;S2
+ 
