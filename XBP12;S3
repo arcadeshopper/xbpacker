@@ -1,0 +1,358 @@
+* FILE     : XBP12;S3
+* VERSION  : 1.2A
+* REVISION : RELEASE 2
+* DATE     : 06/05/95
+ 
+CLR40  LI   R0,SCN40          clear 40 column screen
+       LI   R1,>2000
+       BLWP @VSBW
+       LI   R2,40*24-1
+CL40LP MOVB R1,@VDPWD
+       DEC  R2
+       JNE  CL40LP
+       RT
+ 
+MTXT1  DATA 4,MT1,MT4,MT5,MT6
+MTXT2  DATA 1,MT2
+MTXT3  DATA 1,MT3
+ 
+MT1    DATA 0*40+1,38
+       TEXT 'XB/PACKER Version 1.2A (c) Brad Snyder'
+MT2    DATA 2*40+9,21
+       TEXT '* UNREGISTERED COPY *'
+MT3    DATA 2*40+1,14
+       TEXT 'Registered to:'
+MT4    DATA 6*40+3,22
+       TEXT 'PRESS              FOR'
+MT5    DATA 8*40+0,40
+       BYTE 128,128,128,128,128,128,128,128
+       BYTE 128,128,128,128,128,128,128,128
+       BYTE 128,128,128,128,128,128,128,128
+       BYTE 128,128,128,128,128,128,128,128
+       BYTE 128,128,128,128,128,128,128,128
+MT6    DATA 21*40+4,31
+       TEXT '[F9]         Return To CMD Line'
+ 
+MENU   LWPI SLWS
+ 
+       MOV  @SETST,@SETST     check for setup
+       JNE  MENUN1
+       BL   @XERR
+       DATA 5
+ 
+MENUN1 BL   @CLR40            clear the 40 col screen
+       LI   R0,>0204
+       BLWP @VWTR             move screen to >1000
+       LI   R0,>0403
+       BLWP @VWTR             move defs to >1800
+       LI   R0,>0717
+       BLWP @VWTR             set 40 col colors
+       LI   R1,32*8+DEF40
+       MOV  R1,@FAC
+       BLWP @GPLLNK           load ASCII defs / upper case
+       DATA >0018
+       LI   R1,96*8+DEF40
+       MOV  R1,@FAC
+       BLWP @GPLLNK           load ASCII defs / lower case
+       DATA >004A
+       LI   R0,128*8+DEF40
+       LI   R1,LINEDF
+       LI   R2,8
+       BLWP @VMBW             define line char
+       LI   R0,>01F0
+       BLWP @VWTR             switch to the 40 col screen
+       SWPB R0
+       MOVB R0,@>83D4
+ 
+       BL   @PNT40            print menu text
+       DATA MTXT1
+ 
+       MOVB @REGIS,@REGIS     check which text to use
+       JEQ  MENUN2
+ 
+       BL   @PNT40            put up owner's name
+       DATA MTXT3
+       LI   R0,2*40+16+SCN40
+       LI   R1,REGIS+1
+       LI   R2,40-16
+       BLWP @VMBW
+       JMP  MENUN3
+ 
+MENUN2 BL   @PNT40
+       DATA MTXT2
+ 
+MENUN3 LI   R0,10*40+5+SCN40  generate 1-5 or 1-10(0) prompts
+       LI   R1,>3100
+       MOV  @AMSSIZ,R2
+MLP1   BLWP @VSBW
+       AI   R1,>0100
+       CI   R1,>3A00          if prompt is past 9, change to 0
+       JNE  MLP1A
+       LI   R1,>3000
+MLP1A  AI   R0,40
+       DEC  R2
+       JNE  MLP1
+ 
+       LI   R0,10*40+17+SCN40 put names on menu
+       LI   R1,NAMES
+       LI   R2,20
+       MOV  @AMSSIZ,R3
+MLP2   BLWP @VMBW
+       AI   R0,40
+       A    R2,R1
+       DEC  R3
+       JNE  MLP2
+ 
+MLP3   CLR  R0
+       MOVB R0,@>8374
+       SZCB @KMASK,@STATUS
+       BLWP @KSCAN
+       MOVB @STATUS,R0
+       COC  @KMASK,R0
+       JNE  MLP3
+ 
+       MOVB @>8375,R10
+       SRL  R10,8
+       MOV  R10,R1
+       CI   R10,15            F9 key
+       JEQ  MENUN4
+       CI   R10,>3A           colon key?
+       JEQ  MLP3
+ 
+       AI   R1,-48            if 0 pressed, change to 10
+       JNE  MLP4
+       MOV  @TEN,R1
+MLP4   C    R1,@ONE
+       JL   MLP3
+       C    R1,@AMSSIZ
+       JH   MLP3
+ 
+       MOV  R1,@FAC
+       BL   @ASMBNK
+ 
+MENUN4 LI   R0,>0200
+       BLWP @VWTR             move screen to >0000
+       LI   R0,>0400
+       BLWP @VWTR             move defs to >0000
+       LI   R0,>0707
+       BLWP @VWTR             set screen color
+       LI   R0,>01E0
+       BLWP @VWTR             switch back to 32 col screen
+       SWPB R0
+       MOVB R0,@>83D4
+ 
+       CI   R10,15
+       JEQ  MENUN5
+ 
+       LWPI GPLWS
+       CLR  R8
+       CLR  @>8342
+       LI   R6,>601E
+       B    @GPL
+ 
+MENUN5 LWPI GPLWS
+       CLR  R8
+       CB   @FF,@>8344
+       JNE  MENUX
+       B    @ERR2
+MENUX  B    @NEXT
+ 
+* sub to print to 40 col screen
+ 
+PNT40  MOV  *R11+,R4          get pointer to text table
+       MOV  *R4+,R3           get # of text items
+PN40L1 MOV  *R4+,R1           get pointer to text & data
+       MOV  *R1+,R0           get screen location
+       MOV  *R1+,R2           get # of bytes
+       AI   R0,SCN40
+       BLWP @VMBW
+       DEC  R3
+       JNE  PN40L1
+       RT
+ 
+NMLEN  DATA 20
+ 
+NAME   LWPI MYWS
+ 
+       MOV  @SETST,@SETST     make sure setup is done
+       JNE  NM1
+       BL   @XERR
+       DATA 5
+ 
+NM1    CLR  R0                get name for bank
+       LI   R1,1
+       LI   R2,BUF1
+       MOVB @NMLEN+1,*R2
+       BLWP @STRREF
+ 
+       MOV  @CB,R5            grab current bank in case it's needed
+ 
+       CB   @>8312,@ONE+1     see if bank # is offered
+       JEQ  NM2
+ 
+       CLR  R0                yes, get it
+       LI   R1,2
+       BLWP @NUMREF
+       BLWP @XMLLNK
+       DATA CFI
+       MOV  @FAC,R5
+       C    R5,@ONE
+       JL   ALER
+       C    R5,@AMSSIZ
+       JL   NM2
+       JEQ  NM2
+ALER   B    @ERROR
+ 
+NM2    DEC  R5
+       MPY  @NMLEN,R5
+       AI   R6,NAMES
+ 
+       MOV  R6,R0             null out current name
+       LI   R1,>2000
+       LI   R2,20
+NM3    MOVB R1,*R0+
+       DEC  R2
+       JNE  NM3
+ 
+       LI   R0,BUF1           move new name in
+       MOVB *R0+,R2
+       JEQ  NMX
+       SRL  R2,8
+       MOV  R6,R1
+       BL   @MOVEM
+ 
+NMX    LWPI GPLWS
+       B    @NEXT
+ 
+* Registration attempt
+ 
+RG     LWPI MYWS
+       MOVB @REGIS,@REGIS     test if registered already
+       JNE  RGX
+       CB   @FF,@>8344        test if a program is running
+       JEQ  RGX
+ 
+       CLR  R0                get validation string
+       LI   R1,1
+       LI   R2,BUF1
+       LI   R3,9*256
+       MOVB R3,*R2
+       BLWP @STRREF
+ 
+       CB   *R2+,R3           check length
+       JEQ  RGN1
+RGX    LWPI GPLWS
+       RT                     NO match, return to setup
+ 
+RGN1   LI   R1,VERID          check the rest of string
+       SRL  R3,8
+ 
+RGLP1  CB   *R2+,*R1+
+       JEQ  RGN2
+       LWPI GPLWS
+       RT                     IF no match, ret to setup
+RGN2   DEC  R3
+       JNE  RGLP1
+ 
+       CLR  R0                get user's name
+       LI   R1,2
+       LI   R2,BUF1
+       LI   R3,30*256
+       MOVB R3,*R2
+       BLWP @STRREF
+       MOVB *R2,*R2
+       JNE  RGN3
+       LWPI GPLWS
+       RT
+ 
+RGN3   INC  R1
+       BLWP @NUMREF
+       BLWP @XMLLNK
+       DATA CFI
+       MOV  @FAC,@CHKSUM
+ 
+       LI   R0,BUF1           now install user's name
+       LI   R1,REGIS
+       MOVB *R0,R2
+       SRL  R2,8
+       INC  R2
+       BL   @MOVEM
+ 
+       MOVB @REGIS,R4
+       BL   @RGCK1            check if registration is valid
+ 
+* If reached this point, regis is OK, must search XB program for ID code
+ 
+       MOV  @>8332,R4         get pointer to XB program
+ 
+RGLP2  LI   R3,VERID          pointer to verification
+       LI   R2,9
+ 
+RGLP3  CB   *R4+,*R3
+       JNE  RGN4
+       MOV  R4,R4
+       JEQ  NOGO
+       INC  R3
+       DEC  R2
+       JEQ  YESGO
+       JMP  RGLP3
+ 
+RGN4   MOV  R4,R4
+       JEQ  NOGO
+       JMP  RGLP2
+ 
+NOGO   LI   R2,5
+NOGO1  BLWP @XMLLNK
+       DATA SCROLL
+       DEC  R2
+       JNE  NOGO1
+       LI   R4,NGTXT
+       BL   @PRINT
+       JMP  $
+ 
+YESGO  MOV  R4,R1             grab pointer to xb program
+       INC  R1
+       LI   R0,REGIS
+       LI   R2,31
+       BL   @MOVEM            install in XB program
+ 
+       INC  R1
+       LI   R0,CHKSUM
+       LI   R2,2
+       BL   @MOVEM
+ 
+       LI   R0,BTEXT3+4       null out text area for menu
+       LI   R1,>2000
+       LI   R2,32
+YGLP1  MOVB R1,*R0+
+       DEC  R2
+       JNE  YGLP1
+ 
+       LI   R2,5
+YESGO1 BLWP @XMLLNK
+       DATA SCROLL
+       DEC  R2
+       JNE  YESGO1
+       LI   R4,YGTXT
+       BL   @PRINT
+       LWPI GPLWS
+       B    @NEXT
+ 
+NGTXT  DATA 3,NGT1,NGT2,NGT3
+NGT1   DATA 20*32+2,26
+       TEXT 'SORRY, A PROGRAM ERROR HAS'
+NGT2   DATA 21*32+2,27
+       TEXT 'OCCURED. POWER DOWN AND TRY'
+NGT3   DATA 22*32+2,6
+       TEXT 'AGAIN.'
+ 
+YGTXT  DATA 3,YGT1,YGT2,YGT3
+YGT1   DATA 20*32+2,27
+       TEXT 'THANKS FOR REGISTERING THIS'
+YGT2   DATA 21*32+2,24
+       TEXT 'PROGRAM! NOW ''SAVE'' YOUR'
+YGT3   DATA 22*32+2,18
+       TEXT 'COPY BACK TO DISK.'
+ 
+* EOF: XBP12;S3
+ 
