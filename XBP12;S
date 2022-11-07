@@ -1,0 +1,647 @@
+* FILE     : XBP12;S
+* VERSION  : 1.2A
+* REVISION : RELEASE 2
+* DATE     : 06/05/95
+ 
+* XB PACKER V1.2A FOR THE AMS 128K OR 256K
+* COPYRIGHT 1995 BRAD SNYDER
+ 
+* The only change from 1.1 to B is a change in the code to detect an AMS
+*
+* Version 1.2 changes: (started 5-10-95)
+*     - auto detects a 128 or 256 AMS and allows more "banks"
+*     - added range checking to the BANK command. How did I miss this in
+*       v1.1b ?!
+*
+* Version 1.2A (6/5/95)
+*     - added setup for low memory, to cover SAMS card. Otherwise, XBP
+*       locks up on SETUP, if ABOOT has not been previously run.
+ 
+       DEF  SETUP,BANK,INSTAL
+       DEF  PASS,ASAVE,CSET,ALOAD
+       DEF  MENU,NAME
+ 
+XMLLNK EQU  >2018
+NUMREF EQU  >200C
+STRREF EQU  >2014
+STATUS EQU  >837C
+KSCAN  EQU  >201C
+VSBW   EQU  >2020
+VMBW   EQU  >2024
+VSBR   EQU  >2028
+VMBR   EQU  >202C
+VWTR   EQU  >2030
+CFI    EQU  >12B8
+GPL    EQU  >60
+NEXT   EQU  >70
+GPLWS  EQU  >83E0
+FAC    EQU  >834A
+ISR    EQU  >83C4
+ERR    EQU  >2034
+VDPWD  EQU  >8C00
+VDPWA  EQU  >8C02
+VDPRD  EQU  >8800
+SCROLL EQU  >26
+VDPPAB EQU  >1000
+VDPBUF EQU  >1080
+VBFSIZ EQU  >2000
+SCN40  EQU  VDPPAB
+DEF40  EQU  SCN40+>800
+ 
+       COPY "DSK*.DSR/GPL_S"
+       COPY "DSK*.XBP12;S2"
+       COPY "DSK*.XBP12;S3"
+ 
+FIVE   DATA 5                 used for range checking
+TEN    DATA 10                used for range checking
+TWELVE DATA 12                number of bytes in bank table
+ONE    DATA 1                 used for range checking
+FF     DATA >FFFF             used to check if a program is running
+KMASK  DATA >2000             mask for key scan
+AMSSIZ DATA 0                 5 for 128K, 10 for 256K
+ 
+CB     DATA 1                 current bank
+SETST  DATA 0                 status of SETUP command
+UISR   DATA 0                 user int. routine address
+ 
+PADBUF BSS  4*10              buffer to save pointers to line table
+BFSTAT BSS  10                status of PAD buffers
+NAMES  TEXT 'no name #1          ' bank names
+       TEXT 'no name #2          '
+       TEXT 'no name #3          '
+       TEXT 'no name #4          '
+       TEXT 'no name #5          '
+       TEXT 'no name #6          '
+       TEXT 'no name #7          '
+       TEXT 'no name #8          '
+       TEXT 'no name #9          '
+       TEXT 'no name #10         '
+       EVEN
+ 
+BTEXT  DATA 4,BTEXT1,BTEXT2,BTEXT3,BTEXT4
+BTEXT1 DATA 0*32+0,32
+       TEXT '  XB/Packer V1.2A  XB bank:     '
+BTEXT2 DATA 1*32+0,32
+       TEXT '  Name:                         '
+BTEXT3 DATA 2*32+0,32
+       TEXT '                                '
+BTEXT4 DATA 3*32+0,32
+       BYTE 32,128,128,128,128,128,128
+       BYTE 128,128,128,128,128,128,128
+       BYTE 128,128,128,128,128,128,128
+       BYTE 128,128,128,128,128,128,128
+       BYTE 128,128,128,32
+       EVEN
+ 
+BUF1   BSS  256               buffer for INSTAL
+ 
+TTEXT  DATA 15,TT1,TT2,TT3,TT4,TT5,TT6
+       DATA TT7,TT8,TT9,TT10,TT11,TT12
+       DATA TT13,TT14,TT0
+TT0    DATA 4*32+2,14
+TT0A   TEXT 'xxxx RAM found'
+TT1    DATA 7*32+3,25
+       TEXT 'Snyder''s Software proudly'
+TT2    DATA 8*32+11,9
+       TEXT 'presents:'
+TT3    DATA 10*32+9,15
+       TEXT 'XB/PACKER V1.2A'
+TT4    DATA 11*32+7,18
+       TEXT 'COPYRIGHT (C) 1995'
+TT5    DATA 12*32+9,14
+       TEXT 'By Brad Snyder'
+TT6    DATA 13*32+15,2
+       TEXT '--'
+TT7    DATA 14*32+2,27
+       TEXT 'This software allows you to'
+TT8    DATA 15*32+2,24
+       TEXT 'load up to 5 XB programs'
+TT9    DATA 16*32+2,23
+       TEXT 'into the 128K AMS or 10'
+TT10   DATA 17*32+2,23
+       TEXT 'into the 256K SuperAMS.'
+TT11   DATA 19*32+2,27
+       TEXT 'To register your copy, send'
+TT12   DATA 20*32+2,21
+       TEXT '$5.00 to: Brad Snyder'
+TT13   DATA 21*32+2,16
+       TEXT '4260 Cedar Drive'
+TT14   DATA 22*32+2,20
+       TEXT 'Walnutport, PA 18088'
+       EVEN
+ 
+LINEDF BYTE 0,0,0,>FF,>FF,0,0,0
+ 
+MYWS   DATA 0,0,0,0,0,0,0,0      workspace with R12 already loaded
+       DATA 0,0,0,0,>1E00,0,0,0
+INTWS  BSS  32
+ 
+RGTXT  TEXT 'Reg. to:'
+VERID  TEXT '1V2.DILBS'       user registration password
+       EVEN
+REGIS  BYTE 0
+       TEXT '                              '  user name
+       EVEN
+CHKSUM DATA 0                 checksum of user's name
+ 
+LBANK  DATA >0200,>0300          data for low memory (SuperAMS!!!)
+ 
+BANKS  DATA >0A00,>0B00,>0C00    default banks
+       DATA >0D00,>0E00,>0F00
+ 
+       DATA >0400,>0500,>0600    alternate banks
+       DATA >0700,>0800,>0900
+ 
+       DATA >1000,>1100,>1200
+       DATA >1300,>1400,>1500
+ 
+       DATA >1600,>1700,>1800
+       DATA >1900,>1A00,>1B00
+ 
+       DATA >0000,>0100,>1C00
+       DATA >1D00,>1E00,>1F00
+ 
+       DATA >2000,>2100,>2200
+       DATA >2300,>2400,>2500
+ 
+       DATA >2600,>2700,>2800
+       DATA >2900,>2A00,>2B00
+ 
+       DATA >2C00,>2D00,>2E00
+       DATA >2F00,>3000,>3100
+ 
+       DATA >3200,>3300,>3400
+       DATA >3500,>3600,>3700
+ 
+       DATA >3800,>3900,>3A00
+       DATA >3B00,>3C00,>3D00
+ 
+* reload small character set
+ 
+CSET   LWPI MYWS
+       LI   R1,1536           start at char 96. (96+96 offset)*8 bytes+table (0)
+       MOV  R1,@FAC
+       BLWP @GPLLNK
+       DATA >004A
+       LWPI GPLWS
+       B    @NEXT
+ 
+* setup defaults, turn on MAP mode
+ 
+INTDEL DATA 60*5              value for 5 sec delay
+ 
+SETUP  MOVB @>8312,@>8312     check if registration is coming
+       JEQ  SUP1
+       BL   @RG
+ 
+SUP1   MOV  @SETST,@SETST     check if setup has already been done
+       JEQ  SETOK             no
+       B    @NEXT             yes
+ 
+* The next section of code is crap. It was not able to find other people's
+* ams cards. Only mine!
+ 
+*SETOK  LWPI MYWS              check if an AMS (not AEMS) card is present
+*       SBO  0
+*       MOVB @FF,@>4000
+*       CLR  R0
+*       MOVB @>4001,R0
+*       SBZ  0
+*       CI   R0,>7F00
+*       JEQ  SETOK1
+*       BL   @XERR
+*       DATA 3
+ 
+* set registers 2 & 3 for low memory mapping
+ 
+SETOK  LWPI MYWS
+       SBO  0                 mapper on
+       LI   R1,LBANK          bank data
+       LI   R0,2*2+>4000      registers
+       MOV  *R1+,*R0+
+       MOV  *R1,*R0
+       SBZ  0                 mapper off
+ 
+* the following AMS detect per a suggestion by Jeff White
+ 
+       SBO   0                mapper on
+       CLR   @>4014           map same page to two different addresses
+       CLR   @>4016
+       SBZ   0                mapper off
+       SBO   1                map mode
+       MOV   @>B000,R7        save value there now
+       CLR   @>B000           start from known value
+       MOV   @FF,@>A000       write >FFFF
+       MOV   @>B000,R6        get value
+       MOV   R7,@>B000        replace old value, in case there is no AMS
+       SBZ   1                pass mode
+       C     R6,@FF
+       JEQ   SETOK1           match?, if so continue
+       BL    @XERR
+       DATA  3
+ 
+* check for size of AMS card.
+ 
+K128   DATA >1F00             max page for a 128K card
+K256   DATA >3F00             max page for a 256K card
+T128   TEXT '128K'
+T256   TEXT '256K'
+ 
+SETOK1 MOV  @TEN,@AMSSIZ      assume a 256K card for now
+       LI   R0,T256           for display on screen
+       SBO  0                 mapper on
+       MOV  @K128,@>4014      map to >a000
+       MOV  @K256,@>4016      map to >b000
+       SBZ  0                 mapper off
+       SBO  1                 map mode
+       CLR  @>B000
+       SETO @>A000
+       MOV  @>B000,@>B000     if this is NOT 0, then we have a 128K card
+       JEQ  SETOK4            0, yes a 256K card
+       MOV  @FIVE,@AMSSIZ     not zero, set to 128K limit checks
+       LI   R0,T128
+SETOK4 SBZ  1                 pass mode
+ 
+       LI   R1,TT0A           move size into title screen in cpu
+       LI   R2,4
+       BL   @MOVEM
+ 
+       BL   @REGCHK
+       JMP  SETOK2
+ 
+       SZCB @REGIS,@REGIS     not registered
+       JMP  SETOK3
+ 
+SETOK2 INC  @LTIMES           registered
+ 
+SETOK3 LI   R0,BFSTAT         zero out buffer flags
+       CLR  R1
+       LI   R2,10
+SETLP4 MOVB R1,*R0+
+       DEC  R2
+       JNE  SETLP4
+ 
+       LI   R1,BANKS          set registers to default pass mode settings
+       BL   @SETBNK
+       MOV  @ONE,@CB          set current bank
+       SBO  1                 enable MAP mode
+ 
+       LI   R0,>FFE7          grab copy of high mem
+       LI   R1,BUF1
+       LI   R2,25
+       BL   @MOVEM
+ 
+       LI   R5,BANKS+12       start bank pointer address
+       MOV  @AMSSIZ,R6        # of banks to copy to
+       DEC  R6
+ 
+SET3LP MOV  R5,R1             copy to other banks
+       BL   @SETBNK
+       LI   R0,BUF1
+       LI   R1,>FFE7
+       LI   R2,25
+       BL   @MOVEM
+ 
+       AI   R5,12
+       DEC  R6
+       JNE  SET3LP
+ 
+       LI   R1,BANKS          return to bank 1
+       BL   @SETBNK
+ 
+       MOV  @ISR,R0           get address of current user int. routine, if any
+       CI   R0,INT            is it the int routine?
+       JEQ  SET2              if so, continue
+       MOV  R0,@UISR          save user int.
+       LI   R0,INT            install int routine address
+       MOV  R0,@ISR
+       MOV  @INTDEL,@INTWS+30 init int timer
+ 
+SET2   CLR  R0                clear the screen
+       LI   R1,>8000          space char
+       BLWP @VSBW
+       LI   R2,32*24-1
+CLSLP  MOVB R1,@VDPWD
+       DEC  R2
+       JNE  CLSLP
+ 
+       LI   R4,TTEXT          print title screen
+       BL   @PRINT
+ 
+       MOV  @FF,@SETST        flag that SETUP is done
+ 
+       LWPI GPLWS             return to XB
+       B    @NEXT
+ 
+INT    LWPI INTWS
+       MOV  @UISR,@GPLWS      check if there is any other isr
+       JEQ  INT2              if 0, continue
+       LWPI GPLWS             otherwise, restore GPL environ & execute ISR
+       MOV  R11,@INTRET+2
+       BL   *R0               execute user ISR, then XBP's
+INTRET LI   R11,>0000
+       LWPI INTWS
+ 
+INT2   CB   @FF,@>8344        is a program running?
+       JNE  INT2A             if so, exit
+       MOV  @INTDEL,R15
+       JMP  INTX
+ 
+INT2A  DEC  R15               time to display bank #?
+       JNE  INTX              no, exit
+       LI   R15,6
+ 
+       MOVB @REGIS,@REGIS
+       JEQ  INT3
+       LI   R12,>24           scan for hot keys
+       CLR  R1                col 0
+       LDCR R1,3
+       LI   R12,>06
+       STCR R4,8
+       INV  R4
+       SRL  R4,8
+ 
+       CI   R4,>60            call up menu
+       JNE  INT4
+INT6   STCR R4,8              wait until key released
+       INV  R4
+       SRL  R4,8
+       CI   R4,>60
+       JEQ  INT6
+ 
+       B    @MENU
+ 
+INT4   CI   R4,>30
+       JNE  INT3
+INT4A  STCR R4,8              wait until hot key released
+       INV  R4
+       SRL  R4,8
+       CI   R4,>30
+       JEQ  INT4A
+ 
+       LWPI SLWS              inc bank #
+       MOV  @CB,@FAC
+       INC  @FAC
+       C    @FAC,@AMSSIZ
+       JLE  INT5
+       MOV  @ONE,@FAC
+INT5   BL   @ASMBNK
+       LWPI INTWS
+ 
+INT3   MOV  @CB,R1            get current bank number
+       CLR  R0
+       DIV  @TEN,R0
+       LI   R2,BTEXT1+32
+       SLA  R0,8
+       AI   R0,>3000          add in offset to make it ASCII
+       MOVB R0,*R2+           put the number into the text block
+       SLA  R1,8
+       AI   R1,>3000
+       MOVB R1,*R2
+ 
+       LI   R2,20             calc address of current bank name
+       MOV  @CB,R3
+       DEC  R3
+       MPY  R2,R3
+       AI   R4,NAMES
+       MOV  R4,R0
+       LI   R1,BTEXT2+12
+       BL   @MOVEM
+ 
+       MOVB @REGIS,@REGIS
+       JEQ  INT3A
+ 
+       LI   R0,RGTXT
+       LI   R1,BTEXT3+6
+       LI   R2,8
+       BL   @MOVEM
+ 
+       INC  R1
+       LI   R0,REGIS+1
+       LI   R2,19
+       BL   @MOVEM
+       JMP  INT3B
+ 
+INT3A  LI   R0,MT2+4
+       LI   R1,BTEXT3+9
+       LI   R2,21
+       BL   @MOVEM
+ 
+INT3B  LI   R4,BTEXT          get address of text
+       BL   @PRINT            print it
+ 
+       LI   R0,128+>60*8      address in VDP for char 128 def
+       LI   R1,LINEDF
+       LI   R2,8
+       BLWP @VMBW             write new def for char 128
+INTX   LWPI GPLWS
+       RT
+ 
+* shutdown, return to normal mode
+ 
+PASS   LWPI MYWS
+       C    @CB,@ONE          is current bank 1?
+       JEQ  PASS3
+       BL   @XERR             if not, error
+       DATA 4
+ 
+PASS3  MOV  @ISR,R0           get current isr address
+       CI   R0,INT            is it the int routine?
+       JNE  PASS2             if not, exit
+       MOV  @UISR,@ISR        restore isr to previous state
+ 
+PASS2  CLR  @SETST            reset flag
+       SBZ  1                 return AMS to pass mode
+       LWPI GPLWS
+       B    @NEXT
+ 
+* select bank
+ 
+BANK   LWPI MYWS
+       CLR  R10               flag for internal use of BANKN$
+ 
+       MOV  @SETST,@SETST     check if setup has been done
+       JNE  BANKOK
+       BL   @XERR             issue 'can't continue' error
+       DATA 5
+ 
+BANKOK CLR  R0                get desired bank # from XB
+       LI   R1,1
+       BLWP @NUMREF
+       BLWP @XMLLNK
+       DATA CFI
+ 
+       C    @FAC,@ONE         check range. complain if out
+       JL   ERROR
+       C    @FAC,@AMSSIZ
+       JH   ERROR
+       JMP  BANKN4
+ 
+* various error returns to Xbasic
+ 
+FERROR LI   R0,VDPPAB-4       point to the PAB-4 so that ERR can retrieve the
+       MOV  R0,@>8304         error code. -4 to allow for PABs as basic uses.
+       LI   R0,>2400          I/O error code
+       JMP  ERR1
+ERR2   LI   R0,>1900          'can't continue'
+       JMP  ERR1
+ERROR  LI   R0,>1E00          'bad value'
+ERR1   BLWP @ERR
+ 
+* save line table pointers for current bank
+ 
+BANKN4 MOV  @CB,R1            get current bank number
+       DEC  R1
+       MOV  R1,R3
+       AI   R3,BFSTAT
+       MOVB @FF,*R3           indicate that the buffer is now valid
+       SLA  R1,2
+       AI   R1,PADBUF         TO this bank's buffer
+       LI   R0,>8330          FROM line table pointers
+       LI   R2,4
+       BL   @MOVEM            move from PAD to buffer
+ 
+       MOV  @FAC,R3           get desired bank number
+       MOV  R3,@CB            make it the current bank
+       DEC  R3
+       MPY  @TWELVE,R3        make it offset into bank data table
+       MOV  R4,R1
+       AI   R1,BANKS
+       BL   @SETBNK           tell AMS what we want
+ 
+* restore PAD for new program
+ 
+       MOV  @CB,R0            get new current bank #
+       DEC  R0
+       MOV  R0,R3
+       AI   R3,BFSTAT
+       MOVB *R3,*R3           is it initialized?
+       JNE  BANKN2            if so, go restore it
+ 
+       LI   R5,>FFE7          (SHOULD LOOK UP HIGH MEM ADDRESS!)
+       MOV  R5,@>8330         if not, just reset line table pointers
+       MOV  R5,@>8332
+       JMP  BANKN1
+ 
+BANKN2 SLA  R0,2              else restore line table pointers
+       AI   R0,PADBUF
+       LI   R1,>8330
+       LI   R2,4
+       BL   @MOVEM
+ 
+BANKN1 MOV  R10,R10           check if called internally
+       JEQ  BANKX2
+       B    *R10
+ 
+BANKX2 LWPI GPLWS             get ready for return to XB
+       CB   @FF,@>8344        is an XB program running?
+       JNE  BANKX             if not, just exit
+       CLR  @>8342            else, zero out current token
+       LI   R6,>601E          and restart the new XB program using "run" from
+       B    @GPL                GPL branch table. Thanks Winfried Winkler!
+ 
+BANKX  B    @NEXT
+ 
+* copy program in bank one to banks 2 through 5
+ 
+* NOTE: THIS COMMAND IS NO LONGER SUPPORTED AND WILL NOT BE UPDATED TO HANDLE
+*       MORE THAN 5 BANKS!
+ 
+INSTAL LWPI MYWS
+ 
+       MOV  @SETST,@SETST
+       JNE  INSOK
+       BL   @XERR
+       DATA 5
+ 
+INSOK  LI   R3,BFSTAT+1       mark all PAD buffers valid
+       LI   R4,4
+INSLP1 MOVB @FF,*R3+
+       DEC  R4
+       JNE  INSLP1
+ 
+       LI   R3,4              copy current line table pointers to all buffers
+       LI   R1,PADBUF+4
+INSLP2 LI   R0,>8330
+       LI   R2,4
+       BL   @MOVEM
+       DEC  R3
+       JNE  INSLP2
+ 
+       LI   R3,>A000          move from bank one to all other banks
+       LI   R4,4*24           # of loops with 256 byte temp buffer
+ 
+INSLP3 LI   R6,4              bank counter
+       LI   R7,BANKS+12       bank data pointer
+       MOV  R3,R0
+       LI   R1,BUF1
+       LI   R2,256
+       BL   @MOVEM            get 256 bytes from bank 1
+ 
+INSLP4 MOV  R7,R1
+       BL   @SETBNK           set to bank to write to
+ 
+       LI   R0,BUF1
+       MOV  R3,R1
+       LI   R2,256
+       BL   @MOVEM            write it
+ 
+       A    @TWELVE,R7        next bank
+       DEC  R6
+       JNE  INSLP4            keep looping until we've written to all banks
+ 
+       LI   R1,BANKS          set back to bank 1
+       BL   @SETBNK
+ 
+       AI   R3,256            get ready for next 256 bytes
+       DEC  R4
+       JNE  INSLP3
+ 
+       LWPI GPLWS
+       B    @NEXT
+ 
+* set map registers per data pointed to in R1
+ 
+SETBNK SBO  0
+       LI   R0,10*2+>4000
+       LI   R2,6
+SETBL1 MOV  *R1+,*R0+
+       DEC  R2
+       JNE  SETBL1
+       SBZ  0
+       RT
+ 
+* move memory to memory
+ 
+MOVEM  MOVB *R0+,*R1+
+       DEC  R2
+       JNE  MOVEM
+       RT
+ 
+* print a block of text
+ 
+PNTRET BSS  2
+ 
+PRINT  MOV  *R4+,R3
+       CLR  R1
+PNTLP  MOV  *R4+,R5
+       MOV  *R5+,R0
+       MOV  *R5+,R2
+       MOV  R11,@PNTRET
+       BL   @SETVW
+       MOV  @PNTRET,R11
+ 
+PNTLP2 MOVB *R5+,R1
+       AI   R1,>6000
+       MOVB R1,@VDPWD
+       DEC  R2
+       JNE  PNTLP2
+ 
+       DEC  R3
+       JNE  PNTLP
+       RT
+ 
+       END
+ 
+* EOF: XBP12;S
+ 
